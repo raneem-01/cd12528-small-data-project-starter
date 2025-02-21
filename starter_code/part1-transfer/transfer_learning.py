@@ -121,7 +121,7 @@ optimizer = optim.Adam(model.classifier.parameters(), lr=0.001)
 # Learning rate scheduler (Reduce LR when validation loss plateaus)
 train_lr_scheduler = lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.1)
 
-def train_model(model, dataloaders, criterion, optimizer, scheduler, num_epochs=10, device='cuda'):
+def train_model(model, criterion, optimizer, scheduler, train_loader, val_loader, num_epochs=10, device='cuda'):
     model = model.to(device)
     best_model_wts = model.state_dict()
     best_acc = 0.0
@@ -130,8 +130,7 @@ def train_model(model, dataloaders, criterion, optimizer, scheduler, num_epochs=
         print(f'Epoch {epoch+1}/{num_epochs}')
         print('-' * 20)
 
-        # Each epoch has a training and validation phase
-        for phase in ['train', 'val']:
+        for phase, loader in zip(['train', 'val'], [train_loader, val_loader]):
             if phase == 'train':
                 model.train()
             else:
@@ -140,38 +139,32 @@ def train_model(model, dataloaders, criterion, optimizer, scheduler, num_epochs=
             running_loss = 0.0
             running_corrects = 0
 
-            # Iterate over data
-            for inputs, labels in dataloaders[phase]:
+            for inputs, labels in loader:
                 inputs = inputs.to(device)
                 labels = labels.to(device)
 
-                # Zero the parameter gradients
                 optimizer.zero_grad()
 
-                # Forward pass
                 with torch.set_grad_enabled(phase == 'train'):
                     outputs = model(inputs)
                     _, preds = torch.max(outputs, 1)
                     loss = criterion(outputs, labels)
 
-                    # Backward pass + optimize in training phase
                     if phase == 'train':
                         loss.backward()
                         optimizer.step()
 
-                # Statistics
                 running_loss += loss.item() * inputs.size(0)
                 running_corrects += torch.sum(preds == labels.data)
 
             if phase == 'train':
                 scheduler.step()
 
-            epoch_loss = running_loss / len(dataloaders[phase].dataset)
-            epoch_acc = running_corrects.double() / len(dataloaders[phase].dataset)
+            epoch_loss = running_loss / len(loader.dataset)
+            epoch_acc = running_corrects.double() / len(loader.dataset)
 
             print(f'{phase} Loss: {epoch_loss:.4f} Acc: {epoch_acc:.4f}')
 
-            # Deep copy the model if accuracy improves
             if phase == 'val' and epoch_acc > best_acc:
                 best_acc = epoch_acc
                 best_model_wts = model.state_dict()
@@ -180,9 +173,57 @@ def train_model(model, dataloaders, criterion, optimizer, scheduler, num_epochs=
     model.load_state_dict(best_model_wts)
     return model
 
-# Assuming dataloaders is a dictionary with 'train' and 'val' DataLoaders
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-trained_model = train_model(model, dataloaders, criterion, optimizer, train_lr_scheduler, num_epochs, device)
+
+def test_model(test_loader, model, class_names):
+    model.eval()  # Set model to evaluation mode
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
+
+    correct = 0
+    total = 0
+    all_preds = []
+    all_labels = []
+
+    with torch.no_grad():
+        for images, labels in test_loader:
+            images, labels = images.to(device), labels.to(device)
+
+            outputs = model(images)
+            _, preds = torch.max(outputs, 1)
+
+            correct += (preds == labels).sum().item()
+            total += labels.size(0)
+
+            all_preds.extend(preds.cpu().numpy())
+            all_labels.extend(labels.cpu().numpy())
+
+    accuracy = correct / total * 100
+    print(f"Test Accuracy: {accuracy:.2f}% ✅")
+
+    # Show sample predictions
+    visualize_predictions(test_loader, model, class_names, device)
+
+def visualize_predictions(test_loader, model, class_names, device):
+    model.eval()
+    images, labels = next(iter(test_loader))
+    images, labels = images.to(device), labels.to(device)
+
+    with torch.no_grad():
+        outputs = model(images)
+        _, preds = torch.max(outputs, 1)
+
+    fig, axes = plt.subplots(3, 3, figsize=(8, 8))
+    axes = axes.flatten()
+
+    for img, label, pred, ax in zip(images.cpu(), labels.cpu(), preds.cpu(), axes):
+        img = img.permute(1, 2, 0).numpy()
+        ax.imshow(img)
+        ax.set_title(f"Actual: {class_names[label]}\nPredicted: {class_names[pred]}")
+        ax.axis("off")
+
+    plt.tight_layout()
+    plt.show()
+
 
 # When you have all the parameters in place, uncomment these to use the functions imported above
 def main():
